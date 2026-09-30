@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "ニコニコ アンビエントライト",
+  "version": "0.1.0",
+  "description": "ニコニコ動画のプレイヤー周囲に映像に合わせた光を表示します。",
+  "permissions": ["storage"],
+  "host_permissions": ["https://www.nicovideo.jp/watch/*"],
+  "action": {
+    "default_title": "アンビエントライト設定",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.nicovideo.jp/watch/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
