@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "ニコニコ アンビエントライト",
   "version": "0.1.0",
-  "description": "ニコニコ動画のプレイヤー周囲に映像に合わせた光を表示します。",
+  "description": "ニコニコ動画に映像連動のアンビエント光と全画面ぼかし背景を表示します。",
   "permissions": ["storage"],
   "host_permissions": ["https://www.nicovideo.jp/watch/*"],
   "action": {

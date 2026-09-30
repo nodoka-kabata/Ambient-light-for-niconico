@@ -1,6 +1,6 @@
 (() => {
   const KEY = "ambientSettings";
-  const defaults = { enabled: true, mode: "glow", blur: 34, spread: 1.18, fade: 250, brightness: 100, contrast: 100, saturation: 100 };
+  const defaults = { enabled: true, mode: "glow", blur: 34, spread: 1.18, fade: 250, brightness: 100, contrast: 100, saturation: 100, backgroundBrightness: 65, backgroundStrength: 35 };
   let settings = defaults;
   let video = null;
   let canvas = null;
@@ -9,15 +9,17 @@
   let animationFrame = 0;
   let lastTime = -1;
   let observedVideo = null;
+  const resizeObserver = new ResizeObserver(resizeCanvas);
   let filteredVideo = null;
   let originalFilter = "";
   let originalFilterPriority = "";
-  let backgroundStyle = null;
-  let hadBackgroundClass = false;
+  let pageBackgroundStyles = [];
   let transparentBackdrops = [];
+  let textShadowStyles = [];
+  let shadowedText = new WeakSet();
   let backgroundVideo = null;
   let backgroundViewport = "";
-  const backgroundClass = "niconico-ambient-full-background";
+  let backgroundChain = [];
 
   const getTargets = () => ({
     video: document.querySelector('video[data-name="video-content"]'),
@@ -76,8 +78,10 @@
       observedVideo.removeEventListener("loadeddata", onLoaded);
       observedVideo.removeEventListener("emptied", onEmptied);
     }
+    resizeObserver.disconnect();
     observedVideo = nextVideo;
     if (observedVideo) {
+      resizeObserver.observe(observedVideo);
       observedVideo.addEventListener("play", scheduleFrame);
       observedVideo.addEventListener("pause", onPause);
       observedVideo.addEventListener("loadeddata", onLoaded);
@@ -92,6 +96,7 @@
 
   function onLoaded() {
     lastTime = -1;
+    styleCanvas();
     draw();
     if (!video.paused) scheduleFrame();
   }
@@ -99,71 +104,163 @@
   function onEmptied() {
     lastTime = -1;
     stopFrames();
+    if (canvas) canvas.style.opacity = "0";
   }
 
   function styleCanvas() {
     if (!canvas) return;
     const fullBackground = settings.mode === "full";
+    const bounds = video.getBoundingClientRect();
+    const ratio = (video.videoWidth || bounds.width) / (video.videoHeight || bounds.height) || 16 / 9;
+    const width = Math.max(window.innerWidth, window.innerHeight * ratio) * 1.16;
+    const height = width / ratio;
     Object.assign(canvas.style, {
       position: fullBackground ? "fixed" : "absolute",
-      inset: fullBackground ? "-8vh -8vw" : "0",
-      width: fullBackground ? "116vw" : "100%",
-      height: fullBackground ? "116vh" : "100%",
+      inset: fullBackground ? "auto" : "0",
+      left: fullBackground ? "50%" : "auto",
+      top: fullBackground ? "50%" : "auto",
+      width: fullBackground ? `${width}px` : "100%",
+      height: fullBackground ? `${height}px` : "100%",
       zIndex: fullBackground ? "-1" : "0",
-      transform: `scale(${settings.spread})`,
-      filter: `blur(${settings.blur * (fullBackground ? 2 : 1)}px) brightness(${settings.brightness}%) contrast(${settings.contrast}%) saturate(${settings.saturation}%)`
+      transform: `${fullBackground ? "translate(-50%, -50%) " : ""}scale(${settings.spread})`,
+      opacity: fullBackground ? `${settings.backgroundStrength * 0.6 / 100}` : "0.9",
+      filter: `blur(${settings.blur * (fullBackground ? 0.75 : 1)}px) ${fullBackground ? `brightness(${settings.backgroundBrightness}%) ` : ""}brightness(${settings.brightness}%) contrast(${settings.contrast}%) saturate(${settings.saturation}%)`
     });
     canvas.style.transition = `opacity ${settings.fade}ms ease`;
   }
 
+  function resizeCanvas() {
+    if (!canvas || !video) return;
+    const bounds = video.getBoundingClientRect();
+    const width = Math.max(2, Math.round(bounds.width / 12));
+    const height = Math.max(2, Math.round(bounds.height / 12));
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+      lastTime = -1;
+      draw();
+    }
+    styleCanvas();
+  }
+
   function restoreBackdrops() {
-    for (const { element, color, priority } of transparentBackdrops.reverse()) {
+    for (const { element, value, priority } of textShadowStyles.reverse()) {
+      if (value) element.style.setProperty("text-shadow", value, priority);
+      else element.style.removeProperty("text-shadow");
+    }
+    textShadowStyles = [];
+    shadowedText = new WeakSet();
+    for (const { element, color, colorPriority, image, imagePriority } of transparentBackdrops.reverse()) {
       if (!element.isConnected) continue;
-      if (color) element.style.setProperty("background-color", color, priority);
+      if (color) element.style.setProperty("background-color", color, colorPriority);
       else element.style.removeProperty("background-color");
+      if (image) element.style.setProperty("background-image", image, imagePriority);
+      else element.style.removeProperty("background-image");
     }
     transparentBackdrops = [];
     backgroundVideo = null;
     backgroundViewport = "";
+    backgroundChain = [];
+  }
+
+  function applyContrastingTextShadows(sourceVideo) {
+    const player = document.querySelector('[data-name="inner"]');
+    const candidates = new Set();
+    const videoBounds = sourceVideo.getBoundingClientRect();
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const text = walker.currentNode;
+      const element = text.parentElement;
+      if (!text.textContent.trim() || !element) continue;
+      if (element === player || player?.contains(element) || element === sourceVideo) continue;
+      const bounds = element.getBoundingClientRect();
+      if (bounds.right <= 0 || bounds.left >= document.documentElement.clientWidth) continue;
+      if (bounds.bottom <= videoBounds.bottom || bounds.top > videoBounds.bottom + videoBounds.height) continue;
+      candidates.add(element);
+    }
+    for (const element of candidates) {
+      if (shadowedText.has(element)) continue;
+      const match = getComputedStyle(element).color.match(/[\d.]+/g);
+      if (!match || match.length < 3) continue;
+      const [r, g, b] = match.slice(0, 3).map(Number);
+      const opposite = `rgba(${255 - r}, ${255 - g}, ${255 - b}, 0.95)`;
+      textShadowStyles.push({
+        element,
+        value: element.style.getPropertyValue("text-shadow"),
+        priority: element.style.getPropertyPriority("text-shadow")
+      });
+      element.style.setProperty("text-shadow", `0 1px 2px ${opposite}, 0 0 1px ${opposite}`, "important");
+      shadowedText.add(element);
+    }
+  }
+
+  function saveInlineStyles(element, properties) {
+    return {
+      element,
+      properties: properties.map(property => ({
+        property,
+        value: element.style.getPropertyValue(property),
+        priority: element.style.getPropertyPriority(property)
+      }))
+    };
+  }
+
+  function restoreInlineStyles(saved) {
+    for (const { property, value, priority } of saved.properties) {
+      if (value) saved.element.style.setProperty(property, value, priority);
+      else saved.element.style.removeProperty(property);
+    }
   }
 
   function clearPageBackdrops(sourceVideo) {
     const viewport = `${window.innerWidth}x${window.innerHeight}`;
-    if (backgroundVideo === sourceVideo && backgroundViewport === viewport && transparentBackdrops.every(item => item.element.isConnected)) return;
+    const chain = [];
+    for (let element = sourceVideo.parentElement; element && element !== document.body; element = element.parentElement) chain.push(element);
+    if (backgroundVideo === sourceVideo && backgroundViewport === viewport && chain.length === backgroundChain.length && chain.every((element, index) => element === backgroundChain[index])) {
+      applyContrastingTextShadows(sourceVideo);
+      return;
+    }
     restoreBackdrops();
-    const viewportArea = window.innerWidth * window.innerHeight;
-    // ponytail: clear only large opaque ancestor surfaces; add site-specific selectors if DOM changes require more.
-    for (let element = sourceVideo.parentElement; element && element !== document.body; element = element.parentElement) {
-      const rect = element.getBoundingClientRect();
-      if (rect.width < window.innerWidth * 0.6 || rect.height < window.innerHeight * 0.45 || rect.width * rect.height < viewportArea * 0.3) continue;
-      const color = getComputedStyle(element).backgroundColor;
-      if (color === "transparent" || /^rgba\([^)]*,\s*0(?:\.0+)?\)$/.test(color)) continue;
+    for (const element of chain) {
+      const style = getComputedStyle(element);
+      const color = style.backgroundColor;
+      const hasColor = color !== "transparent" && !/^rgba\([^)]*,\s*0(?:\.0+)?\)$/.test(color);
+      const hasImage = style.backgroundImage !== "none";
+      if (!hasColor && !hasImage) continue;
       transparentBackdrops.push({
         element,
         color: element.style.getPropertyValue("background-color"),
-        priority: element.style.getPropertyPriority("background-color")
+        colorPriority: element.style.getPropertyPriority("background-color"),
+        image: element.style.getPropertyValue("background-image"),
+        imagePriority: element.style.getPropertyPriority("background-image")
       });
-      element.style.setProperty("background-color", "transparent", "important");
+      if (hasColor) element.style.setProperty("background-color", "transparent", "important");
+      if (hasImage) element.style.setProperty("background-image", "none", "important");
     }
+    applyContrastingTextShadows(sourceVideo);
     backgroundVideo = sourceVideo;
     backgroundViewport = viewport;
+    backgroundChain = chain;
   }
 
   function setFullBackground(enabled, sourceVideo = null) {
     if (enabled) {
-      if (!backgroundStyle) {
-        hadBackgroundClass = document.documentElement.classList.contains(backgroundClass);
-        document.documentElement.classList.add(backgroundClass);
-        backgroundStyle = document.createElement("style");
-        backgroundStyle.textContent = `html.${backgroundClass}, html.${backgroundClass} body { background: transparent !important; }`;
-        document.head.append(backgroundStyle);
+      if (!pageBackgroundStyles.length) {
+        pageBackgroundStyles = [
+          saveInlineStyles(document.documentElement, ["background-color", "background-image"]),
+          saveInlineStyles(document.body, ["background-color", "background-image", "isolation"])
+        ];
+        for (const root of [document.documentElement, document.body]) {
+          root.style.setProperty("background-color", root === document.documentElement ? "#101010" : "transparent", "important");
+          root.style.setProperty("background-image", "none", "important");
+        }
+        document.body.style.setProperty("isolation", "isolate", "important");
       }
       if (sourceVideo) clearPageBackdrops(sourceVideo);
-    } else if (backgroundStyle) {
+    } else if (pageBackgroundStyles.length) {
       restoreBackdrops();
-      backgroundStyle.remove();
-      backgroundStyle = null;
-      if (!hadBackgroundClass) document.documentElement.classList.remove(backgroundClass);
+      for (const saved of pageBackgroundStyles.reverse()) restoreInlineStyles(saved);
+      pageBackgroundStyles = [];
     }
   }
 
@@ -197,12 +294,12 @@
     const { video: nextVideo, inner } = targets;
     observeVideo(nextVideo);
     applyVideoFilter(nextVideo);
-    if (!settings.enabled || !nextVideo || (settings.mode !== "full" && !inner)) {
+    if (!settings.enabled || !nextVideo || (settings.mode === "full" ? !document.body : !inner)) {
       removeLayer();
       video = nextVideo;
       return;
     }
-    const host = settings.mode === "full" ? document.documentElement : inner;
+    const host = settings.mode === "full" ? document.body : inner;
     if (video === nextVideo && canvas?.parentElement === host) {
       setFullBackground(settings.mode === "full", nextVideo);
       styleCanvas();
@@ -233,9 +330,14 @@
     canvas.height = Math.max(2, Math.round(bounds.height / 12));
     context = canvas.getContext("2d", { alpha: false });
     host.insertBefore(canvas, host.firstChild);
+    lastTime = -1;
     styleCanvas();
+    canvas.style.opacity = "0";
+    const mountedCanvas = canvas;
     requestAnimationFrame(() => {
-      if (canvas?.isConnected) canvas.style.opacity = settings.mode === "full" ? "0.55" : "0.9";
+      if (canvas === mountedCanvas) {
+        canvas.style.opacity = settings.mode === "full" ? `${settings.backgroundStrength * 0.6 / 100}` : "0.9";
+      }
     });
     draw();
     if (!video.paused) scheduleFrame();
@@ -244,6 +346,18 @@
   function refresh() {
     mount(getTargets());
   }
+
+  function isTextAreaMutation(record) {
+    if (!video) return false;
+    const target = record.target.nodeType === Node.TEXT_NODE ? record.target.parentElement : record.target;
+    const player = document.querySelector('[data-name="inner"]');
+    if (!target || player?.contains(target)) return false;
+    const text = target.getBoundingClientRect();
+    const bounds = video.getBoundingClientRect();
+    return text.right > 0 && text.left < document.documentElement.clientWidth && text.bottom > bounds.bottom && text.top <= bounds.bottom + bounds.height;
+  }
+
+  window.addEventListener("resize", resizeCanvas);
 
   chrome.storage.sync.get(KEY, result => {
     settings = { ...defaults, ...(result[KEY] || {}) };
@@ -257,7 +371,7 @@
   });
 
   const observer = new MutationObserver(records => {
-    if (records.some(record => {
+    const needsRefresh = records.some(record => {
       if (record.type === "attributes") {
         return record.target.matches?.("video") || record.target.querySelector?.("video");
       }
@@ -266,12 +380,15 @@
         (node.matches?.('video[data-name="video-content"], [data-name="inner"]') ||
           node.querySelector?.('video[data-name="video-content"], [data-name="inner"]'))
       );
-    })) refresh();
+    });
+    if (needsRefresh) refresh();
+    else if (settings.enabled && settings.mode === "full" && records.some(isTextAreaMutation)) applyContrastingTextShadows(video);
   });
   observer.observe(document.documentElement, {
     subtree: true,
     childList: true,
     attributes: true,
+    characterData: true,
     attributeFilter: ["src", "data-name"]
   });
 })();
