@@ -5,32 +5,78 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>アンビエントライト</title>
   <style>
-    body { width: 280px; margin: 0; padding: 16px; color: #eee; background: #202124; font: 14px system-ui, sans-serif; }
-    h1 { margin: 0 0 14px; font-size: 16px; }
-    h2 { margin: 16px 0 8px; color: #bbb; font-size: 12px; font-weight: 600; }
-    label { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0; }
-    input[type="range"] { width: 130px; accent-color: #9b7cff; }
-    input[type="checkbox"] { accent-color: #9b7cff; }
-    select { max-width: 165px; padding: 5px; color: #eee; background: #3a3b3c; border: 0; border-radius: 6px; }
-    output { display: inline-block; width: 36px; color: #bbb; text-align: right; }
-    .row { display: flex; align-items: center; gap: 8px; }
-    #status { min-height: 1.2em; margin-top: 12px; color: #aaa; font-size: 12px; }
+    :root { color-scheme: dark; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { width: 320px; margin: 0; color: #f1f1f1; background: #212121; font-size: 13px; }
+    header { display: flex; align-items: center; justify-content: space-between; min-height: 56px; padding: 0 16px; border-bottom: 1px solid #ffffff1a; }
+    h1 { margin: 0; font-size: 15px; font-weight: 500; letter-spacing: .01em; }
+    section { padding: 8px 16px 10px; }
+    section + section { border-top: 1px solid #ffffff1a; }
+    h2 { margin: 4px 0 6px; color: #aaa; font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
+    label { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 16px; min-height: 36px; }
+    label:focus-within { color: #fff; }
+    .control { display: grid; grid-template-columns: 118px 48px; align-items: center; gap: 8px; }
+    select { width: 174px; padding: 7px 30px 7px 10px; color: inherit; background: #383838; border: 1px solid transparent; border-radius: 4px; font: inherit; }
+    select:hover { background: #444; }
+    select:focus-visible { border-color: #3ea6ff; outline: none; }
+    input[type="range"] { width: 118px; height: 20px; margin: 0; appearance: none; background: transparent; cursor: pointer; accent-color: #3ea6ff; }
+    input[type="range"]::-webkit-slider-runnable-track { height: 3px; background: #717171; border-radius: 2px; }
+    input[type="range"]::-webkit-slider-thumb { width: 13px; height: 13px; margin-top: -5px; appearance: none; background: #ddd; border: 0; border-radius: 50%; box-shadow: 0 1px 4px #0009; }
+    input[type="range"]:hover::-webkit-slider-thumb { background: #fff; }
+    input[type="range"]:focus-visible { outline: 2px solid #3ea6ff; outline-offset: 2px; border-radius: 2px; }
+    input[type="checkbox"] { accent-color: #3ea6ff; }
+    input:disabled { opacity: .45; cursor: not-allowed; }
+    fieldset { margin: 4px 0; padding: 0; border: 0; }
+    legend { float: left; padding: 7px 0; }
+    .directions { display: flex; justify-content: flex-end; gap: 10px; min-height: 36px; }
+    .directions label { display: flex; grid-template-columns: none; gap: 4px; min-height: auto; }
+    output { color: #aaa; font-variant-numeric: tabular-nums; text-align: right; }
+    .switch { position: relative; width: 36px; height: 14px; min-height: 14px; }
+    .switch input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+    .switch span { position: absolute; inset: 0; background: #717171; border-radius: 7px; transition: background-color .15s ease; }
+    .switch span::after { content: ""; position: absolute; top: -3px; left: 0; width: 20px; height: 20px; background: #bdbdbd; border-radius: 50%; box-shadow: 0 1px 4px #0009; transition: transform .15s ease, background-color .15s ease; }
+    .switch input:checked + span { background: #17669b; }
+    .switch input:checked + span::after { background: #3ea6ff; transform: translateX(16px); }
+    .switch input:focus-visible + span { outline: 2px solid #fff; outline-offset: 3px; }
+    #status { min-height: 30px; padding: 7px 16px 9px; color: #aaa; border-top: 1px solid #ffffff1a; font-size: 11px; }
+    [hidden] { display: none; }
+    @media (prefers-reduced-motion: reduce) { .switch span, .switch span::after { transition: none; } }
   </style>
 </head>
 <body>
-  <h1>アンビエントライト</h1>
-  <label>有効にする <input id="enabled" type="checkbox"></label>
-  <label>表示方式 <select id="mode"><option value="glow">プレイヤー周囲</option><option value="full">画面全体をぼかす</option></select></label>
-  <label>ぼかし <span class="row"><input id="blur" type="range" min="8" max="72" step="1"><output></output></span></label>
-  <label>広がり <span class="row"><input id="spread" type="range" min="1" max="1.6" step="0.01"><output></output></span></label>
-  <label>フェード時間 <span class="row"><input id="fade" type="range" min="0" max="1000" step="50"><output></output></span></label>
-  <label data-full-only>背景の明るさ <span class="row"><input id="backgroundBrightness" type="range" min="20" max="100" step="1"><output></output></span></label>
-  <label data-full-only>背景の強さ <span class="row"><input id="backgroundStrength" type="range" min="10" max="70" step="1"><output></output></span></label>
-  <h2>映像フィルター</h2>
-  <label>明るさ <span class="row"><input id="brightness" type="range" min="50" max="150" step="1"><output></output></span></label>
-  <label>コントラスト <span class="row"><input id="contrast" type="range" min="50" max="150" step="1"><output></output></span></label>
-  <label>彩度 <span class="row"><input id="saturation" type="range" min="0" max="200" step="1"><output></output></span></label>
-  <div id="status" role="status"></div>
+  <header>
+    <h1>アンビエントライト</h1>
+    <label class="switch" title="アンビエントライトを有効にする">
+      <input id="enabled" type="checkbox" aria-label="アンビエントライトを有効にする">
+      <span aria-hidden="true"></span>
+    </label>
+  </header>
+  <section aria-labelledby="appearance-heading">
+    <h2 id="appearance-heading">表示</h2>
+    <label>表示方式 <select id="mode"><option value="glow">プレイヤー周囲</option><option value="full">画面全体をぼかす</option></select></label>
+    <label>ぼかし <span class="control"><input id="blur" type="range" min="8" max="72" step="1"><output></output></span></label>
+    <label>広がり <span class="control"><input id="spread" type="range" min="1" max="1.6" step="0.01"><output></output></span></label>
+    <fieldset><legend>発光方向</legend><div class="directions"><label><input id="directionTop" type="checkbox">上</label><label><input id="directionRight" type="checkbox">右</label><label><input id="directionBottom" type="checkbox">下</label><label><input id="directionLeft" type="checkbox">左</label></div></fieldset>
+    <label>フェード時間 <span class="control"><input id="fade" type="range" min="0" max="1000" step="50"><output></output></span></label>
+    <label data-full-only>背景の明るさ <span class="control"><input id="backgroundBrightness" type="range" min="20" max="100" step="1"><output></output></span></label>
+    <label data-full-only>背景の強さ <span class="control"><input id="backgroundStrength" type="range" min="10" max="70" step="1"><output></output></span></label>
+  </section>
+  <section aria-labelledby="quality-heading">
+    <h2 id="quality-heading">画質とパフォーマンス</h2>
+    <label>WebGL レンダラー <input id="webGL" type="checkbox"></label>
+    <label>黒帯を自動検出 <input id="detectBlackBars" type="checkbox"></label>
+    <label>描画解像度 <span class="control"><input id="resolution" type="range" min="6.25" max="100" step="6.25"><output></output></span></label>
+    <label>FPS 上限 <span class="control"><input id="framerateLimit" type="range" min="15" max="60" step="15"><output></output></span></label>
+    <label>滑らかな動き <input id="frameBlending" type="checkbox"></label>
+    <label>補間の強さ <span class="control"><input id="frameBlendingSmoothness" type="range" min="0" max="100" step="1"><output></output></span></label>
+  </section>
+  <section aria-labelledby="filter-heading">
+    <h2 id="filter-heading">映像フィルター</h2>
+    <label>明るさ <span class="control"><input id="brightness" type="range" min="50" max="150" step="1"><output></output></span></label>
+    <label>コントラスト <span class="control"><input id="contrast" type="range" min="50" max="150" step="1"><output></output></span></label>
+    <label>彩度 <span class="control"><input id="saturation" type="range" min="0" max="200" step="1"><output></output></span></label>
+  </section>
+  <div id="status" role="status" aria-live="polite"></div>
   <script src="popup.js"></script>
 </body>
 </html>
