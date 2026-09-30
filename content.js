@@ -328,7 +328,7 @@ if (typeof chrome !== "undefined" && typeof document !== "undefined") (() => {
         height: fullBackground ? `${height}px` : "100%",
         zIndex: fullBackground ? "-1" : "0",
         transform: `${fullBackground ? "translate(-50%, -50%) " : ""}scale(${layer.scale})`,
-        opacity: `${layer.opacity * (fullBackground ? settings.backgroundStrength * 0.6 / 100 : 1)}`,
+        opacity: `${layer.opacity * (fullBackground ? settings.backgroundStrength / 100 : 1)}`,
         filter: `blur(${settings.blur * (fullBackground ? 0.75 : 1)}px) ${fullBackground ? `brightness(${settings.backgroundBrightness}%) ` : ""}brightness(${settings.brightness}%) contrast(${settings.contrast}%) saturate(${settings.saturation}%)`,
         transition: `opacity ${settings.fade}ms ease`,
         webkitMaskImage: mask === "none" ? "none" : mask.image,
