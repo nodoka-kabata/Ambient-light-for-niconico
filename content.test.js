@@ -6,7 +6,11 @@ const {
   detectBlackBars,
   directionMask,
   frameBlendAlpha,
+  isGlassSurfacePaint,
+  isPlaybackControlRect,
   isThemeAttribute,
+  pageSurfaceKind,
+  pageSurfaceOpacity,
   shouldDrawFrame,
   translucentColor
 } = require("./content.js");
@@ -20,7 +24,24 @@ test("projector layers expand outward and fade like the reference effect", () =>
 });
 
 test("card backgrounds stay readable while showing the ambient layer", () => {
-  assert.equal(translucentColor("rgb(33, 33, 33)"), "rgba(33, 33, 33, 0.68)");
+  assert.equal(translucentColor("rgb(33, 33, 33)"), "rgba(33, 33, 33, 0.54)");
+  assert.equal(pageSurfaceKind({ width: 900, height: 500 }, 500), "detail");
+  assert.equal(pageSurfaceKind({ width: 420, height: 500 }, 500), "comments");
+  assert.equal(pageSurfaceOpacity("comments"), 0.26);
+  assert.equal(pageSurfaceOpacity("detail"), 0.32);
+  assert.equal(pageSurfaceOpacity("fine"), 0.55);
+  assert.equal(pageSurfaceOpacity("section"), 0.54);
+  assert.equal(isGlassSurfacePaint(0.1), true);
+  assert.equal(isGlassSurfacePaint(0, "linear-gradient(#222, #111)"), true);
+  assert.equal(isGlassSurfacePaint(0, "url(thumbnail.jpg)"), false);
+  assert.equal(isGlassSurfacePaint(0), false);
+});
+
+test("only a wide control surface near the player bottom is glassified", () => {
+  const player = { top: 100, bottom: 820, width: 1280, height: 720 };
+  assert.equal(isPlaybackControlRect({ top: 730, bottom: 810, width: 1200, height: 80 }, player), true);
+  assert.equal(isPlaybackControlRect({ top: 110, bottom: 170, width: 1200, height: 60 }, player), false);
+  assert.equal(isPlaybackControlRect({ top: 730, bottom: 790, width: 300, height: 60 }, player), false);
 });
 
 test("page theme attributes trigger a background refresh", () => {

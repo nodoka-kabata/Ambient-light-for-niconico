@@ -10,10 +10,28 @@ function buildProjectorLayers(spread) {
   }));
 }
 
-function translucentColor(color, opacity = 0.68) {
+function translucentColor(color, opacity = 0.54) {
   const channels = color.match(/[\d.]+/g);
   if (!channels || channels.length < 3) return null;
   return `rgba(${channels.slice(0, 3).map(Number).join(", ")}, ${opacity})`;
+}
+
+function pageSurfaceKind(bounds, textLength = 0) {
+  if (bounds.width < 480) return "comments";
+  if (bounds.height <= 240) return "fine";
+  if (bounds.width >= 480 && textLength >= 300) return "detail";
+  return "section";
+}
+
+const pageSurfaceOpacity = kind => kind === "comments" ? 0.26 : kind === "detail" ? 0.32 : kind === "fine" ? 0.55 : 0.54;
+const isGlassSurfacePaint = (alpha, backgroundImage = "none") =>
+  alpha >= 0.02 || (backgroundImage !== "none" && !/url\(/i.test(backgroundImage));
+
+function isPlaybackControlRect(rect, playerRect) {
+  return rect.width >= playerRect.width * 0.55 &&
+    rect.height >= 24 && rect.height <= 160 &&
+    rect.top >= playerRect.top + playerRect.height * 0.55 &&
+    rect.bottom <= playerRect.bottom + 2;
 }
 
 const themeAttributes = ["class", "data-theme", "data-color-mode"];
@@ -139,11 +157,14 @@ function createWebGLRenderer(canvas) {
       gl.uniform1f(alphaLocation, alpha);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
+    },
+    destroy() {
+      gl.getExtension("WEBGL_lose_context")?.loseContext();
     }
   };
 }
 
-if (typeof module !== "undefined") module.exports = { buildProjectorLayers, calculateRenderSize, detectBlackBars, directionMask, frameBlendAlpha, isThemeAttribute, shouldDrawFrame, translucentColor };
+if (typeof module !== "undefined") module.exports = { buildProjectorLayers, calculateRenderSize, detectBlackBars, directionMask, frameBlendAlpha, isGlassSurfacePaint, isPlaybackControlRect, isThemeAttribute, pageSurfaceKind, pageSurfaceOpacity, shouldDrawFrame, translucentColor };
 
 if (typeof chrome !== "undefined" && typeof document !== "undefined") (() => {
   const KEY = "ambientSettings";
@@ -153,6 +174,7 @@ if (typeof chrome !== "undefined" && typeof document !== "undefined") (() => {
   let canvas = null;
   let projectors = [];
   let renderer = null;
+  let contextLostHandler = null;
   let mountedWebGL = null;
   let webGLFailed = false;
   let crop = { top: 0, right: 0, bottom: 0, left: 0 };
@@ -177,6 +199,84 @@ if (typeof chrome !== "undefined" && typeof document !== "undefined") (() => {
   let backgroundVideo = null;
   let backgroundViewport = "";
   let backgroundChain = [];
+  let playerGlassStyle = null;
+  let pageGlassStyle = null;
+
+  function ensurePageGlassStyle() {
+    if (pageGlassStyle) return;
+    pageGlassStyle = document.createElement("style");
+    pageGlassStyle.textContent = `
+      [data-nicob-page-glass] {
+        outline: 1px solid rgba(255, 255, 255, .14) !important;
+        outline-offset: -1px !important;
+        box-shadow: inset 0 1px rgba(255, 255, 255, .17), inset 0 -1px rgba(255, 255, 255, .035), 0 10px 30px rgba(0, 0, 0, .2) !important;
+        backdrop-filter: blur(22px) saturate(155%) contrast(1.03) !important;
+        -webkit-backdrop-filter: blur(22px) saturate(155%) contrast(1.03) !important;
+        background-clip: padding-box !important;
+      }
+      [data-nicob-page-glass="fine"] {
+        outline-color: rgba(255, 255, 255, .1) !important;
+        box-shadow: inset 0 1px rgba(255, 255, 255, .12), 0 4px 14px rgba(0, 0, 0, .12) !important;
+        backdrop-filter: blur(14px) saturate(145%) !important;
+        -webkit-backdrop-filter: blur(14px) saturate(145%) !important;
+      }
+      @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+        [data-nicob-page-glass] {
+          background-color: rgba(28, 29, 32, .94) !important;
+          outline-color: rgba(255, 255, 255, .28) !important;
+          backdrop-filter: none !important;
+          -webkit-backdrop-filter: none !important;
+        }
+      }
+    `;
+    document.documentElement.append(pageGlassStyle);
+  }
+
+  function stylePlaybackControls() {
+    document.querySelectorAll("[data-nicob-liquid-glass]").forEach(element => element.removeAttribute("data-nicob-liquid-glass"));
+    if (!settings.enabled) return;
+    const player = document.querySelector('[data-name="inner"]');
+    if (!player) return;
+    const playerRect = player.getBoundingClientRect();
+    const candidates = new Set();
+    for (const control of player.querySelectorAll('button, [role="button"], input[type="range"], [role="slider"]')) {
+      for (let element = control.parentElement; element && element !== player; element = element.parentElement) {
+        if (isPlaybackControlRect(element.getBoundingClientRect(), playerRect)) candidates.add(element);
+      }
+    }
+    const surface = [...candidates].sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width)[0];
+    if (!surface) return;
+    surface.setAttribute("data-nicob-liquid-glass", "");
+    if (playerGlassStyle) return;
+    playerGlassStyle = document.createElement("style");
+    playerGlassStyle.textContent = `
+      [data-nicob-liquid-glass] {
+        background: linear-gradient(180deg, rgba(48, 49, 54, .52), rgba(12, 13, 16, .7)) !important;
+        border: 1px solid rgba(255, 255, 255, .16) !important;
+        box-shadow: inset 0 1px rgba(255, 255, 255, .24), inset 0 -1px rgba(255, 255, 255, .04), 0 12px 36px rgba(0, 0, 0, .32) !important;
+        backdrop-filter: blur(26px) saturate(180%) contrast(1.04) !important;
+        -webkit-backdrop-filter: blur(26px) saturate(180%) contrast(1.04) !important;
+      }
+      [data-nicob-liquid-glass] button,
+      [data-nicob-liquid-glass] [role="button"] {
+        transition: background-color 140ms ease-out, box-shadow 140ms ease-out, transform 100ms ease-out !important;
+      }
+      [data-nicob-liquid-glass] button:hover,
+      [data-nicob-liquid-glass] [role="button"]:hover {
+        background-color: rgba(255, 255, 255, .12) !important;
+        box-shadow: inset 0 1px rgba(255, 255, 255, .16) !important;
+      }
+      [data-nicob-liquid-glass] button:active,
+      [data-nicob-liquid-glass] [role="button"]:active { transform: scale(.94); }
+      @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+        [data-nicob-liquid-glass] { background: rgba(20, 20, 22, .94) !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        [data-nicob-liquid-glass] button, [data-nicob-liquid-glass] [role="button"] { transition: background-color 100ms linear !important; }
+      }
+    `;
+    document.documentElement.append(playerGlassStyle);
+  }
 
   const getTargets = () => ({
     video: document.querySelector('video[data-name="video-content"]'),
@@ -193,6 +293,9 @@ if (typeof chrome !== "undefined" && typeof document !== "undefined") (() => {
 
   function removeLayer() {
     stopFrames();
+    if (canvas && contextLostHandler) canvas.removeEventListener("webglcontextlost", contextLostHandler);
+    contextLostHandler = null;
+    renderer?.destroy();
     for (const projector of projectors) projector.canvas.remove();
     projectors = [];
     renderer = null;
@@ -363,6 +466,7 @@ if (typeof chrome !== "undefined" && typeof document !== "undefined") (() => {
       else element.style.removeProperty("background-image");
     }
     transparentBackdrops = [];
+    document.querySelectorAll("[data-nicob-page-glass]").forEach(element => element.removeAttribute("data-nicob-page-glass"));
     softenedBackdrops = new WeakSet();
     softenedColors = new WeakMap();
     backgroundVideo = null;
@@ -377,9 +481,11 @@ if (typeof chrome !== "undefined" && typeof document !== "undefined") (() => {
       const bounds = element.getBoundingClientRect();
       if (bounds.width < 240 || bounds.height < 40) continue;
       const style = getComputedStyle(element);
-      const color = translucentColor(style.backgroundColor);
+      const surfaceKind = pageSurfaceKind(bounds, element.textContent.trim().length);
+      const color = translucentColor(style.backgroundColor, pageSurfaceOpacity(surfaceKind));
       const alpha = Number(style.backgroundColor.match(/[\d.]+/g)?.[3] ?? 1);
-      if (!color || alpha < 0.95) continue;
+      const decorativeBackground = style.backgroundImage !== "none" && !/url\(/i.test(style.backgroundImage);
+      if (!color || !isGlassSurfacePaint(alpha, style.backgroundImage)) continue;
       let sameColorAncestor = false;
       for (let parent = element.parentElement; parent; parent = parent.parentElement) {
         if (softenedColors.get(parent) === style.backgroundColor) {
@@ -395,9 +501,12 @@ if (typeof chrome !== "undefined" && typeof document !== "undefined") (() => {
         imagePriority: element.style.getPropertyPriority("background-image")
       });
       element.style.setProperty("background-color", sameColorAncestor ? "transparent" : color, "important");
+      if (decorativeBackground) element.style.setProperty("background-image", "none", "important");
+      if (!sameColorAncestor) element.setAttribute("data-nicob-page-glass", surfaceKind === "section" ? "" : surfaceKind);
       softenedBackdrops.add(element);
       softenedColors.set(element, style.backgroundColor);
     }
+    ensurePageGlassStyle();
   }
 
   function saveInlineStyles(element, properties) {
@@ -500,6 +609,7 @@ if (typeof chrome !== "undefined" && typeof document !== "undefined") (() => {
     const { video: nextVideo, inner } = targets;
     observeVideo(nextVideo);
     applyVideoFilter(nextVideo);
+    stylePlaybackControls();
     if (!settings.enabled || !nextVideo || (settings.mode === "full" ? !document.body : !inner)) {
       removeLayer();
       video = nextVideo;
@@ -509,6 +619,7 @@ if (typeof chrome !== "undefined" && typeof document !== "undefined") (() => {
     if (video === nextVideo && canvas?.parentElement === host && mountedWebGL === settings.webGL) {
       setFullBackground(settings.mode === "full", nextVideo);
       resizeCanvas();
+      scheduleFrame();
       return;
     }
 
@@ -536,12 +647,15 @@ if (typeof chrome !== "undefined" && typeof document !== "undefined") (() => {
         }
       }
       if (webGLRenderer) renderer = webGLRenderer;
-      if (webGLRenderer) layerCanvas.addEventListener("webglcontextlost", event => {
-        event.preventDefault();
-        webGLFailed = true;
-        removeLayer();
-        requestAnimationFrame(refresh);
-      }, { once: true });
+      if (webGLRenderer) {
+        contextLostHandler = event => {
+          event.preventDefault();
+          webGLFailed = true;
+          removeLayer();
+          requestAnimationFrame(refresh);
+        };
+        layerCanvas.addEventListener("webglcontextlost", contextLostHandler, { once: true });
+      }
       projectors.push({ canvas: layerCanvas, context: webGLRenderer ? null : layerCanvas.getContext("2d", { alpha: false }) });
       host.insertBefore(layerCanvas, host.firstChild);
     }
@@ -612,7 +726,10 @@ if (typeof chrome !== "undefined" && typeof document !== "undefined") (() => {
       );
     });
     if (needsRefresh) refresh();
-    else if (settings.enabled && settings.mode === "full" && records.some(isTextAreaMutation)) softenPageCards(video);
+    else {
+      stylePlaybackControls();
+      if (settings.enabled && settings.mode === "full" && records.some(isTextAreaMutation)) softenPageCards(video);
+    }
   });
   observer.observe(document.documentElement, {
     subtree: true,
